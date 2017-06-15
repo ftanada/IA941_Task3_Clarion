@@ -48,12 +48,12 @@ namespace ClarionDEMO
                     // FMT 29/04/2017 - initial population
                     worldServer.GenerateFood(0, 3);
                     worldServer.GenerateFood(1, 3);
-                    worldServer.GenerateJewel(0, 2);
-                    worldServer.GenerateJewel(1, 2);
-                    worldServer.GenerateJewel(2, 2);
-                    worldServer.GenerateJewel(3, 2);
-                    worldServer.GenerateJewel(4, 2);
-                    worldServer.GenerateJewel(5, 2);
+                    worldServer.GenerateJewel(0, 3);
+                    worldServer.GenerateJewel(1, 3);
+                    worldServer.GenerateJewel(2, 3);
+                    worldServer.GenerateJewel(3, 3);
+                    worldServer.GenerateJewel(4, 3);
+                    worldServer.GenerateJewel(5, 3);
 
                     if (!String.IsNullOrWhiteSpace(creatureId))
                     {

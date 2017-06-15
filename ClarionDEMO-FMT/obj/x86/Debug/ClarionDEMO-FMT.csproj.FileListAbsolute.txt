@@ -7,3 +7,4 @@ C:\$user\tanada\pessoal\Mestrado\IA941A\Clarion\Clarion FabioTanada 2017\Clarion
 C:\$user\tanada\pessoal\Mestrado\IA941A\Clarion\Clarion FabioTanada 2017\ClarionDEMO-FMT\bin\Debug\glib-sharp.pdb
 C:\$user\tanada\pessoal\Mestrado\IA941A\Clarion\Clarion FabioTanada 2017\ClarionDEMO-FMT\obj\x86\Debug\ClarionDEMO.exe
 C:\$user\tanada\pessoal\Mestrado\IA941A\Clarion\Clarion FabioTanada 2017\ClarionDEMO-FMT\obj\x86\Debug\ClarionDEMO.pdb
+C:\$user\tanada\pessoal\Mestrado\IA941A\Clarion\Clarion FabioTanada 2017\ClarionDEMO-FMT\obj\x86\Debug\ClarionDEMO-FMT.csprojResolveAssemblyReference.cache

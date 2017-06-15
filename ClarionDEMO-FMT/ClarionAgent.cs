@@ -25,7 +25,8 @@ namespace ClarionDEMO
         GO_TO,
         EAT,
         GET,
-        HIDE
+        HIDE,
+        STOP
     }
 
     public class ClarionAgent
@@ -42,8 +43,11 @@ namespace ClarionDEMO
         // FMT 29/04/2017
         private String DIMENSION_FOOD_AHEAD = "FoodAhead";
         private String DIMENSION_JEWEL_AHEAD = "JewelAhead";
+        private String DIMENSION_LEAFLET_JEWEL_AHEAD = "LeafletJewelAhead";
         private String DIMENSION_JEWEL_HIDE = "JewelHide";
         private String DIMENSION_ENERGY_LOW = "EnergyLow";
+        private String DIMENSION_CLOSE_OBJECT = "CloseObject";
+        private String DIMENSION_LEAFLET_COMPLETE = "LeafletComplete";
         double prad = 0;
         #endregion
 
@@ -88,15 +92,19 @@ namespace ClarionDEMO
         // FMT 29/04/2017 element to perceive a thing (food / jewel)
         private DimensionValuePair inputFoodAhead;
         private DimensionValuePair inputJewelAhead;
+        private DimensionValuePair inputLeafletJewelAhead;
         private DimensionValuePair inputEnergyLow;
         private DimensionValuePair inputJewelHide;
+        private DimensionValuePair inputCloseObject;
+        private DimensionValuePair inputLeafletComplete;
         private String lastSeenFood = String.Empty;
         private String lastSeenJewel = String.Empty;
         private String lastSeenJewelColor = String.Empty;
         private Creature myCreature = null;
+        private Thing seenThing;
         private double thingVr = 1;
         private double thingVl = 1;
-        private double thingDistance = 0;
+        private double thingDistance = 800;
         private double thingX = 0;
         private double thingY = 0;
         #endregion
@@ -121,6 +129,8 @@ namespace ClarionDEMO
         private ExternalActionChunk outputGet;
         ///  Output action that makes the agent hide object
         private ExternalActionChunk outputHide;
+        ///  Output action that makes the agent stop after completing leaflet
+        private ExternalActionChunk outputStop;
 
         /// </summary>
         /// <param name="nws"></param>
@@ -128,15 +138,16 @@ namespace ClarionDEMO
         /// <param name="creature_Name"></param>
         #endregion
 
-        
+
         #region Constructor
         public ClarionAgent(WorldServer nws, String creature_ID, String creature_Name)
         {
 			worldServer = nws;
 			// Initialize the agent
             CurrentAgent = World.NewAgent("Current Agent");
-			mind = new Mind();
-			mind.Show ();
+            // FMT 15/06 - temp disable mind
+			//mind = new Mind();
+			//mind.Show ();
 			creatureId = creature_ID;
 			creatureName = creature_Name;
 
@@ -145,8 +156,11 @@ namespace ClarionDEMO
             // FMT 29/04/2017
             inputFoodAhead = World.NewDimensionValuePair(SENSOR_VISUAL_DIMENSION, DIMENSION_FOOD_AHEAD);
             inputJewelAhead = World.NewDimensionValuePair(SENSOR_VISUAL_DIMENSION, DIMENSION_JEWEL_AHEAD);
+            inputLeafletJewelAhead = World.NewDimensionValuePair(SENSOR_VISUAL_DIMENSION, DIMENSION_LEAFLET_JEWEL_AHEAD);
             inputJewelHide = World.NewDimensionValuePair(SENSOR_VISUAL_DIMENSION, DIMENSION_JEWEL_HIDE);
             inputEnergyLow = World.NewDimensionValuePair(SENSOR_VISUAL_DIMENSION, DIMENSION_ENERGY_LOW);
+            inputCloseObject = World.NewDimensionValuePair(SENSOR_VISUAL_DIMENSION, DIMENSION_CLOSE_OBJECT);
+            inputLeafletComplete = World.NewDimensionValuePair(SENSOR_VISUAL_DIMENSION, DIMENSION_LEAFLET_COMPLETE);
 
             // Initialize Output actions
             outputRotateClockwise = World.NewExternalActionChunk(CreatureActions.ROTATE_CLOCKWISE.ToString());
@@ -156,6 +170,7 @@ namespace ClarionDEMO
             outputGet = World.NewExternalActionChunk(CreatureActions.GET.ToString());
             outputGoTo = World.NewExternalActionChunk(CreatureActions.GO_TO.ToString());
             outputHide = World.NewExternalActionChunk(CreatureActions.HIDE.ToString());
+            outputStop = World.NewExternalActionChunk(CreatureActions.STOP.ToString());
 
             //Create thread to simulation
             runThread = new Thread(CognitiveCycle);
@@ -184,7 +199,7 @@ namespace ClarionDEMO
         /// </summary>
         /// <param name="deleteAgent">If true beyond abort the current simulation it will die the agent.</param>
         public void Abort(Boolean deleteAgent)
-        {   Console.WriteLine ("Aborting ...");
+        {   Console.WriteLine ("Aborting (leaflet complete) ...");
             if (runThread != null && runThread.IsAlive)
             {
                 runThread.Abort();
@@ -207,7 +222,8 @@ namespace ClarionDEMO
 				while (prad > Math.PI) prad -= 2 * Math.PI;
 				while (prad < - Math.PI) prad += 2 * Math.PI;
 				Sack s = worldServer.SendGetSack("0");
-				mind.setBag(s);
+                if (mind != null)
+				  mind.setBag(s);
 			}
 
 			return response;
@@ -235,59 +251,84 @@ namespace ClarionDEMO
                         {
                             worldServer.SendEatIt(creatureId, lastSeenFood);
                             worldServer.GenerateFood(1, 1);
-                            mind.update();
-                            // FMT redirect creature
-                            if (thingX > 0)
-                            {
-                                Console.WriteLine("Action (EAT): GO TO");
-                                worldServer.SendSetGoTo(creatureId, thingVr, thingVl, thingX, thingY);
-                            }
+                            if (mind != null)
+                              mind.update();
                         }
                         break;
                     case CreatureActions.GET:
-                        Console.WriteLine("Action: GET");
-                        if (lastSeenJewel != null)
+                        if (seenThing != null)
                         {
-                            worldServer.SendSackIt(creatureId, lastSeenJewel);
-                            mind.setBag(worldServer.SendGetSack(creatureId));
-                            mind.update();
-                            // FMT 15/05/2017 forcing window refresh
-                            //mind.HideAll();
-                            //mind.ShowAll();
-                            // FMT reseed more jewel
-                            worldServer.GenerateJewel(1);
-                            // FMT redirect creature
-                            if (thingX > 0)
-                            {
-                                Console.WriteLine("Action (GET): GO TO");
-                                worldServer.SendSetGoTo(creatureId, thingVr, thingVl, thingX, thingY);
-                            }
+                            Console.WriteLine("Action: GET (thing) " + seenThing.Name);
+                            worldServer.SendSackIt(creatureId, seenThing.Name);
+                        }
+                        else
+                        { 
+                          if (lastSeenJewel != null)
+                          {
+                             Console.WriteLine("Action: GET (alt) "+ lastSeenJewel);
+                             worldServer.SendSackIt(creatureId, lastSeenJewel);
+                          }
+                        }
+                        // FMT reseed more jewel
+                        worldServer.GenerateJewel(1);
+                        if (mind != null)
+                        {
+                           mind.setBag(worldServer.SendGetSack(creatureId));
+                           mind.update();
                         }
                         break;
                     case CreatureActions.GO_TO:
-                        Console.Write("Action: GO TO ");
-                        Console.Write(thingX);
-                        Console.WriteLine(thingY);
-                        worldServer.SendSetGoTo(creatureId, thingVr, thingVl, thingX, thingY);
+                        if (seenThing != null)
+                        {
+                            Console.Write("Action: GO TO (thing) ");
+                            Console.Write(seenThing.comX);
+                            Console.WriteLine(seenThing.comY);
+                            worldServer.SendSetGoTo(creatureId, 1, 1, seenThing.comX, seenThing.comY);
+                        }
+                        else
+                        {
+                            Console.Write("Action: GO TO (alt) ");
+                            Console.Write(thingX);
+                          Console.WriteLine(thingY);
+                          if (thingX > 0)
+                          {
+                              worldServer.SendSetGoTo(creatureId, thingVr, thingVl, thingX, thingY);
+                              Console.WriteLine("Action GoTo sent");
+                              thingX = 0;
+                          }
+                        }  // end else
                         //worldServer.SendSetAngle(creatureId, 1, 1, prad);
                         break;
                     case CreatureActions.HIDE:
-                        Console.WriteLine("Action: HIDE");
-                        if (lastSeenJewel != null)
+                        if (seenThing != null)
                         {
-                            worldServer.SendHideIt(creatureId, lastSeenJewel);
-                            mind.update();
-                            // FMT reseed more jewel
-                            worldServer.GenerateJewel(1);
-                            // FMT redirect creature
-                            if (thingX > 0)
+                            Console.WriteLine("Action: HIDE (thing) "+ seenThing.Name);
+                            worldServer.SendHideIt(creatureId, seenThing.Name);
+                        }
+                        else
+                        { 
+                          Console.WriteLine("Action: HIDE (alt)");
+                            if (lastSeenJewel != null)
                             {
-                                Console.WriteLine("Action (HIDE): GO TO");
-                                worldServer.SendSetGoTo(creatureId, thingVr, thingVl, thingX, thingY);
+                                worldServer.SendHideIt(creatureId, lastSeenJewel);
+                                if (mind != null)
+                                  mind.update();
+                                // FMT reseed more jewel
+                                worldServer.GenerateJewel(1);
+                                // FMT redirect creature
+                                if (thingX > 0)
+                                {
+                                    Console.WriteLine("Action (HIDE): GO TO");
+                                    worldServer.SendSetGoTo(creatureId, thingVr, thingVl, thingX, thingY);
+                                    thingX = 0;
+                                }
                             }
                         }
                         break;
-                default:
+                    case CreatureActions.STOP:
+                        worldServer.SendStopCreature(creatureId);
+                        break;
+                    default:
 					break;
 				}
 			}
@@ -310,10 +351,11 @@ namespace ClarionDEMO
             //RichDrive
         }
 
-        /// <summary>
-        /// Setup the ACS subsystem
-        /// </summary>
-        private void SetupACS()
+        
+            /// <summary>
+            /// Setup the ACS subsystem
+            /// </summary>
+            private void SetupACS()
         {
             // Create Rule to avoid collision with wall
             SupportCalculator avoidCollisionWallSupportCalculator = FixedRuleToAvoidCollisionWall;
@@ -326,8 +368,8 @@ namespace ClarionDEMO
             SupportCalculator goAheadSupportCalculator = FixedRuleToGoAhead;
             FixedRule ruleGoAhead = AgentInitializer.InitializeActionRule(CurrentAgent, FixedRule.Factory, outputGoAhead, goAheadSupportCalculator);
             
-            // Commit this rule to Agent (in the ACS)
-            CurrentAgent.Commit(ruleGoAhead);
+            // Commit this rule to Agent (in the ACS) - FMT commenting to avoid conflict
+            //CurrentAgent.Commit(ruleGoAhead);
 
             // FMT 29/04/2017
             // FMT Create Rule to Eat
@@ -363,8 +405,15 @@ namespace ClarionDEMO
             FixedRule ruleGoto = AgentInitializer.InitializeActionRule(CurrentAgent, FixedRule.Factory, outputGoTo, gotoSupportCalculator);
 
             // Commit this rule to Agent (in the ACS)
-            //CurrentAgent.Commit(ruleGoto);
+            CurrentAgent.Commit(ruleGoto);
 
+            // FMT Create Rule to Stop
+            SupportCalculator stopSupportCalculator = FixedRuleToStop;
+            FixedRule ruleStop = AgentInitializer.InitializeActionRule(CurrentAgent, FixedRule.Factory, outputStop, stopSupportCalculator);
+
+            // Commit this rule to Agent (in the ACS)
+            CurrentAgent.Commit(ruleStop);
+            
             // Disable Rule Refinement
             CurrentAgent.ACS.Parameters.PERFORM_RER_REFINEMENT = false;
 
@@ -387,6 +436,11 @@ namespace ClarionDEMO
         }
 
         /// <summary>
+        private Boolean jewelInLeaflets(String color, List<Leaflet> leaflets)
+        {
+            return leaflets.Where(leaflet => leaflet.getRequired(color) > leaflet.getCollected(color)).Any();
+        }
+
         /// Make the agent perception. In other words, translate the information that came from sensors to a new type that the agent can understand
         /// </summary>
         /// <param name="sensorialInformation">The information that came from server</param>
@@ -406,11 +460,39 @@ namespace ClarionDEMO
             // New sensory information
             SensoryInformation si = World.NewSensoryInformation(CurrentAgent);
 
-            // FMT 29/04/2017 - handle food and jewel
+            // FMT 29/04/2017 - handle food and jewel - initialization
             Boolean jewelAhead = false;
             Boolean foodAhead = false;
             Boolean wallAhead = false;
+            double closeObjectActivationValue = CurrentAgent.Parameters.MIN_ACTIVATION;
+            double foodAheadActivationValue = CurrentAgent.Parameters.MIN_ACTIVATION;
             double jewelAheadActivationValue = CurrentAgent.Parameters.MIN_ACTIVATION;
+            double jewelHideActivationValue = CurrentAgent.Parameters.MIN_ACTIVATION;
+            double leafletJewelAheadActivationValue = CurrentAgent.Parameters.MIN_ACTIVATION;
+            double leafletCompleteActivationValue = CurrentAgent.Parameters.MIN_ACTIVATION;
+            double wallAheadActivationValue = CurrentAgent.Parameters.MIN_ACTIVATION;
+
+            // FMT updating mind view
+            myCreature = (Creature)listOfThings.Where(item => (item.CategoryId == Thing.CATEGORY_CREATURE)).First();
+            seenThing = listOfThings.Where(item => (item.CategoryId != Thing.CATEGORY_CREATURE && item.CategoryId != Thing.CATEGORY_BRICK)).OrderBy(x => x.DistanceToCreature).FirstOrDefault();
+            int n = 0;
+            int isRequiredTotal = 0;
+            List<Leaflet> leaflets = myCreature.getLeaflets();
+            foreach (Leaflet l in leaflets)
+            {
+                if (mind != null)
+                  mind.updateLeaflet(n, l);
+                // FMT checking if we target a jewel if that jewel is in the leaflet
+                if (jewelAheadActivationValue > CurrentAgent.Parameters.MIN_ACTIVATION)
+                {
+                    int isRequired = l.getRequired(lastSeenJewelColor);
+                    int isCollected = l.getCollected(lastSeenJewelColor);
+                    isRequiredTotal = isRequiredTotal + (isRequired - isCollected);
+                }
+                n++;
+            }
+
+            // FMT preparing input
             foreach (Thing item in listOfThings)
             {
                 switch (item.CategoryId)
@@ -423,6 +505,8 @@ namespace ClarionDEMO
 ;                       }
                         else
                         {
+                            // FMT 15/06 disable jewelAhead verification for now
+                            jewelAhead = true;
                             if ((thingDistance > 0) && (thingDistance > item.DistanceToCreature))
                             {
                                 thingX = item.comX;
@@ -431,10 +515,15 @@ namespace ClarionDEMO
                                 //CurrentAgent.ReceiveFeedback(si, 0.0);
                             }
                         }
-                        jewelAheadActivationValue = jewelAhead ? CurrentAgent.Parameters.MAX_ACTIVATION : CurrentAgent.Parameters.MIN_ACTIVATION;
-                        si.Add(inputJewelAhead, jewelAheadActivationValue);
                         if (jewelAhead)
                         {
+                            if (jewelInLeaflets(item.Material.Color, leaflets))
+                                leafletJewelAheadActivationValue = CurrentAgent.Parameters.MAX_ACTIVATION;
+                            else
+                            {
+                                jewelAheadActivationValue = CurrentAgent.Parameters.MAX_ACTIVATION;
+                                jewelHideActivationValue = CurrentAgent.Parameters.MAX_ACTIVATION;
+                            }
                             lastSeenJewel = item.Name;
                             lastSeenJewelColor = item.Material.Color;
                             Console.Write("Input: jewel ");
@@ -445,7 +534,6 @@ namespace ClarionDEMO
                     case Thing.CATEGORY_FOOD:
                     case Thing.CATEGORY_PFOOD:
                     case Thing.CATEGORY_NPFOOD:
-                        double foodAheadActivationValue = CurrentAgent.Parameters.MIN_ACTIVATION;
                         if (item.DistanceToCreature <= 61) foodAhead = true;
                         if ((foodAhead) && !(jewelAhead))
                         {
@@ -454,42 +542,37 @@ namespace ClarionDEMO
                             Console.Write("Input: food ");
                             Console.WriteLine(lastSeenFood);
                         }
-                        si.Add(inputFoodAhead, foodAheadActivationValue);
                         break;
                     case Thing.CATEGORY_BRICK:
                         if (item.DistanceToCreature <= 61) wallAhead = true;
                         // Detect if we have a wall ahead
-                        double wallAheadActivationValue = wallAheadActivationValue = CurrentAgent.Parameters.MIN_ACTIVATION;
                         if ((wallAhead) && !(jewelAhead) && !(foodAhead))
                             wallAheadActivationValue = CurrentAgent.Parameters.MAX_ACTIVATION;
-                        si.Add(inputWallAhead, wallAheadActivationValue);
                         break;
                 }
             }
 
+            Boolean hasCompletedLeaflet = leaflets[0].situation;
+            if (hasCompletedLeaflet)
+              leafletCompleteActivationValue = CurrentAgent.Parameters.MAX_ACTIVATION;
+
+            Boolean closeObjectAhead = seenThing == null ? false : seenThing.DistanceToCreature < 40;
+            if (closeObjectAhead)
+              closeObjectActivationValue = CurrentAgent.Parameters.MAX_ACTIVATION;
+
+            // FMT adding inputs
+            si.Add(inputCloseObject, closeObjectActivationValue);
+            si.Add(inputFoodAhead, foodAheadActivationValue);
+            si.Add(inputJewelAhead, jewelAheadActivationValue);
+            si.Add(inputJewelHide, jewelHideActivationValue);
+            si.Add(inputLeafletJewelAhead, leafletJewelAheadActivationValue);
+            si.Add(inputLeafletComplete, leafletCompleteActivationValue);
+            si.Add(inputWallAhead, wallAheadActivationValue);
+            //Console.WriteLine("prepareSensoryInformation: food "+ foodAheadActivationValue+" jewel "+ jewelAheadActivationValue+
+            //                  " leafletJewel "+ leafletJewelAheadActivationValue+" hide "+ jewelHideActivationValue+
+            //                  " wall "+ wallAheadActivationValue); 
+
             //Console.WriteLine(sensorialInformation);
-            myCreature = (Creature)listOfThings.Where(item => (item.CategoryId == Thing.CATEGORY_CREATURE)).First();
-            int n = 0; 
-            int isRequiredTotal = 0;
-            foreach (Leaflet l in myCreature.getLeaflets())
-            {
-                mind.updateLeaflet(n, l);
-                // FMT checking if we target a jewel if that jewel is in the leaflet
-                if (jewelAheadActivationValue > CurrentAgent.Parameters.MIN_ACTIVATION)
-                {
-                    int isRequired = l.getRequired(lastSeenJewelColor);
-                    int isCollected = l.getCollected(lastSeenJewelColor);
-                    isRequiredTotal = isRequiredTotal + (isRequired - isCollected);
-                }
-                n++;
-            }
-            if ((jewelAheadActivationValue > CurrentAgent.Parameters.MIN_ACTIVATION) && (isRequiredTotal <= 0))
-            {
-                // not in leaflet, setup hide it
-                double jewelHideActivationValue = CurrentAgent.Parameters.MAX_ACTIVATION;
-                si.Add(inputJewelHide, jewelHideActivationValue);
-                si.Add(inputJewelAhead, CurrentAgent.Parameters.MIN_ACTIVATION);
-            }
             //System.Threading.Thread.Sleep(100);
             return si;
         }
@@ -499,39 +582,56 @@ namespace ClarionDEMO
         private double FixedRuleToAvoidCollisionWall(ActivationCollection currentInput, Rule target)
         {
             // See partial match threshold to verify what are the rules available for action selection
-            return ((currentInput.Contains(inputWallAhead, CurrentAgent.Parameters.MAX_ACTIVATION))) ? 1.0 : 0.0;
+            return ((currentInput.Contains(inputCloseObject, CurrentAgent.Parameters.MIN_ACTIVATION)) && 
+                    (currentInput.Contains(inputFoodAhead, CurrentAgent.Parameters.MIN_ACTIVATION)) &&
+                    (currentInput.Contains(inputLeafletJewelAhead, CurrentAgent.Parameters.MIN_ACTIVATION)) &&
+                    (currentInput.Contains(inputJewelAhead, CurrentAgent.Parameters.MIN_ACTIVATION))) ? 1.0 : 0.0;
         }
 
         private double FixedRuleToGoAhead(ActivationCollection currentInput, Rule target)
         {
-            // Here we will make the logic to go ahead
-            return ((currentInput.Contains(inputWallAhead, CurrentAgent.Parameters.MIN_ACTIVATION))) ? 1.0 : 0.0;
+            // Here we will make the logic to go ahead - FMT 15/06
+            return ((currentInput.Contains(inputFoodAhead, CurrentAgent.Parameters.MAX_ACTIVATION)) ||
+                    (currentInput.Contains(inputLeafletJewelAhead, CurrentAgent.Parameters.MAX_ACTIVATION)) ||
+                    (currentInput.Contains(inputJewelAhead, CurrentAgent.Parameters.MAX_ACTIVATION)) &&
+                    (currentInput.Contains(inputCloseObject, CurrentAgent.Parameters.MIN_ACTIVATION))) ? 1.0 : 0.0;
         }
 
-        // FMT 13/05/2017
+        // FMT 15/06/2017
         private double FixedRuleToGoTo(ActivationCollection currentInput, Rule target)
         {
             // Here we will make the logic to go ahead
-            return ((currentInput.Contains(inputWallAhead, CurrentAgent.Parameters.MIN_ACTIVATION))) ? 1.0 : 0.0;
+            return ((currentInput.Contains(inputFoodAhead, CurrentAgent.Parameters.MAX_ACTIVATION)) ||
+                    (currentInput.Contains(inputLeafletJewelAhead, CurrentAgent.Parameters.MAX_ACTIVATION)) ||
+                    (currentInput.Contains(inputJewelAhead, CurrentAgent.Parameters.MAX_ACTIVATION))) ? 1.0 : 0.0;
         }
 
         // FMT 29/04/2017
         private double FixedRuleToEat(ActivationCollection currentInput, Rule target)
         {
             // Here we will make the logic to eat
-            return ((currentInput.Contains(inputFoodAhead, CurrentAgent.Parameters.MAX_ACTIVATION))) ? 1.0 : 0.0;
+            return ((currentInput.Contains(inputCloseObject, CurrentAgent.Parameters.MAX_ACTIVATION)) &&
+                    (currentInput.Contains(inputFoodAhead, CurrentAgent.Parameters.MAX_ACTIVATION))) ? 1.0 : 0.0;
         }
 
         private double FixedRuleToGet(ActivationCollection currentInput, Rule target)
         {
             // Here we will make the logic to get thing
-            return ((currentInput.Contains(inputJewelAhead, CurrentAgent.Parameters.MAX_ACTIVATION))) ? 1.0 : 0.0;
+            return ((currentInput.Contains(inputCloseObject, CurrentAgent.Parameters.MAX_ACTIVATION)) && 
+                    (currentInput.Contains(inputLeafletJewelAhead, CurrentAgent.Parameters.MAX_ACTIVATION))) ? 1.0 : 0.0;
         }
 
         private double FixedRuleToHide(ActivationCollection currentInput, Rule target)
         {
             // Here we will make the logic to hide thing
-            return ((currentInput.Contains(inputJewelHide, CurrentAgent.Parameters.MAX_ACTIVATION))) ? 1.0 : 0.0;
+            return ((currentInput.Contains(inputCloseObject, CurrentAgent.Parameters.MAX_ACTIVATION)) && 
+                    (currentInput.Contains(inputJewelHide, CurrentAgent.Parameters.MAX_ACTIVATION))) ? 1.0 : 0.0;
+        }
+
+        private double FixedRuleToStop(ActivationCollection currentInput, Rule target)
+        {
+            // Here we will make the logic to hide thing
+            return ((currentInput.Contains(inputLeafletComplete, CurrentAgent.Parameters.MAX_ACTIVATION))) ? 1.0 : 0.0;
         }
 
         #endregion
